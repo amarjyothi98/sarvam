@@ -1,14 +1,17 @@
-import React, { useEffect, useRef } from 'react';
-import { View, StyleSheet, ScrollView, Animated, SafeAreaView } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, StyleSheet, ScrollView, Animated, SafeAreaView, Dimensions } from 'react-native';
 import ChatBubble from '../components/ChatBubble';
 import MessageInput from '../components/MessageInput';
 import { useChatStore } from '../store/chatStore';
+
+const { height } = Dimensions.get('window');
 
 const ChatScreen = () => {
   const messages = useChatStore((state) => state.messages);
   const addMessage = useChatStore((state) => state.addMessage);
   const scrollViewRef = useRef<ScrollView>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [showSpacer, setShowSpacer] = useState(false);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -18,10 +21,24 @@ const ChatScreen = () => {
     }).start();
   }, []);
 
+  // useEffect(() => {
+  //   if (messages.length > 0 && scrollViewRef.current) {
+  //     setTimeout(() => {
+  //       scrollViewRef.current?.scrollToEnd({ animated: true });
+  //     }, 100);
+  //   }
+  // }, [messages]);
   useEffect(() => {
     if (messages.length > 0 && scrollViewRef.current) {
       setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
+        const lastMessage = messages[messages.length - 1];
+        if (lastMessage.isUser) {
+          // scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+          setShowSpacer(true);
+        } else {
+          // setShowSpacer(false);
+          scrollViewRef.current?.scrollToEnd({ animated: true });
+        }
       }, 100);
     }
   }, [messages]);
@@ -94,6 +111,9 @@ const ChatScreen = () => {
               isStreaming={message.isStreaming}
             />
           ))}
+          {showSpacer &&
+           <View style={styles.spacer} />
+          }
         </ScrollView>
         <MessageInput onSend={handleSendMessage} />
       </Animated.View>
@@ -114,10 +134,15 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 16,
     // backgroundColor: 'red',
+    // paddingBottom: height * 0.5,
   },
   messagesContent: {
     paddingTop: 16,
     paddingBottom: 80,
+  },
+  spacer: {
+    height: height * 0.53,
+    // backgroundColor: 'red',
   },
 });
 
