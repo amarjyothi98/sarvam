@@ -107,6 +107,8 @@ export interface VideoPlayerState {
   isMuted: boolean;
   playbackRate: number;
   isFullscreen: boolean;
+  showSubtitles: boolean;
+  selectedAudioTrack: string;
 }
 
 export interface SubtitleEditorState {

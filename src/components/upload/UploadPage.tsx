@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import { Button } from '../ui';
 import { useVideoStore } from '../../store/videoStore';
@@ -7,8 +8,11 @@ import ProcessingStatus from './ProcessingStatus';
 import LanguageSelect from './LanguageSelect';
 
 export function UploadPage() {
+  const router = useRouter();
   const [selectedLanguage, setSelectedLanguage] = useState('hi'); // Default to Hindi
   const [showProcessing, setShowProcessing] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   
   const { 
     currentProject, 
@@ -37,6 +41,42 @@ export function UploadPage() {
     setCurrentProject(null);
     setShowProcessing(false);
     setError(null);
+  };
+
+  const handleOpenVideoEditor = async () => {
+    if (currentProject) {
+      setIsNavigating(true);
+      try {
+        await router.push('/complete-studio');
+      } catch (error) {
+        console.error('Navigation error:', error);
+        setIsNavigating(false);
+      }
+    }
+  };
+
+  const handleDownloadPreview = async () => {
+    if (currentProject) {
+      setIsDownloading(true);
+      try {
+        // Simulate download preparation time
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Create a mock download URL - in a real app, this would be generated from the server
+        const downloadUrl = URL.createObjectURL(new Blob(['Mock video content'], { type: 'video/mp4' }));
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = `${currentProject.name}_preview.mp4`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(downloadUrl);
+      } catch (error) {
+        console.error('Download error:', error);
+      } finally {
+        setIsDownloading(false);
+      }
+    }
   };
 
   // Check video validity on component mount
@@ -152,17 +192,30 @@ export function UploadPage() {
                 Your video has been successfully translated to {selectedLanguage.toUpperCase()}
               </p>
               <div className="flex justify-center space-x-4">
-                <Button variant="primary" size="lg">
-                  Open Video Editor
+                <Button 
+                  variant="primary" 
+                  size="lg"
+                  onClick={handleOpenVideoEditor}
+                  disabled={isNavigating || isDownloading}
+                  loading={isNavigating}
+                >
+                  {isNavigating ? 'Opening Studio...' : 'Open Studio'}
                 </Button>
-                <Button variant="outline" size="lg">
-                  Download Preview
+                <Button 
+                  variant="outline" 
+                  size="lg"
+                  onClick={handleDownloadPreview}
+                  disabled={isNavigating || isDownloading}
+                  loading={isDownloading}
+                >
+                  {isDownloading ? 'Preparing Download...' : 'Download Preview'}
                 </Button>
                 <Button 
                   variant="ghost" 
                   size="lg"
                   onClick={handleCancelProject}
                   className="text-gray-600 hover:text-gray-800"
+                  disabled={isNavigating || isDownloading}
                 >
                   Start Over
                 </Button>

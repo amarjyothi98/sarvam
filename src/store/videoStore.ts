@@ -48,7 +48,8 @@ interface VideoStore {
   // Player actions
   updatePlayerState: (updates: Partial<VideoPlayerState>) => void;
   
-  // Subtitle actions
+  // Subtitle editor actions
+  updateSubtitleEditor: (updates: Partial<SubtitleEditorState>) => void;
   updateSubtitle: (subtitleId: string, updates: Partial<Subtitle>) => void;
   addSubtitle: (subtitle: Subtitle) => void;
   removeSubtitle: (subtitleId: string) => void;
@@ -70,7 +71,9 @@ const initialPlayerState: VideoPlayerState = {
   volume: 0.8,
   isMuted: false,
   playbackRate: 1.0,
-  isFullscreen: false
+  isFullscreen: false,
+  showSubtitles: true,
+  selectedAudioTrack: 'original'
 };
 
 const initialSubtitleEditorState: SubtitleEditorState = {
@@ -217,6 +220,11 @@ export const useVideoStore = create<VideoStore>()(
         updatePlayerState: (updates) => {
           const { playerState } = get();
           set({ playerState: { ...playerState, ...updates } });
+        },
+
+        updateSubtitleEditor: (updates) => {
+          const { subtitleEditor } = get();
+          set({ subtitleEditor: { ...subtitleEditor, ...updates } });
         },
 
         updateSubtitle: (subtitleId, updates) => {
