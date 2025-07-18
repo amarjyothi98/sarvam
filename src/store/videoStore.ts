@@ -12,42 +12,55 @@ import {
 import { mockApiService } from '../lib/api/mockService';
 
 interface VideoStore {
+  // Current project state
   currentProject: VideoProject | null;
   projects: VideoProject[];
   
+  // Processing state
   isProcessing: boolean;
   currentStep: string;
   processingSteps: ProcessingStep[];
   error: string | null;
   
+  // Video player state
   playerState: VideoPlayerState;
   
+  // Subtitle editor state
   subtitleEditor: SubtitleEditorState;
   
+  // Export state
   exportJob: ExportJob | null;
   
+  // Actions
   setCurrentProject: (project: VideoProject | null) => void;
   updateProject: (projectId: string, updates: Partial<VideoProject>) => void;
   addProject: (project: VideoProject) => void;
   removeProject: (projectId: string) => void;
   
+  // Video upload actions
   uploadVideo: (file: File) => Promise<void>;
   
+  // Processing actions
   startProcessing: (videoId: string, targetLanguage: string) => Promise<void>;
   setProcessingSteps: (steps: ProcessingStep[]) => void;
   setError: (error: string | null) => void;
   
+  // Player actions
   updatePlayerState: (updates: Partial<VideoPlayerState>) => void;
   
+  // Subtitle actions
   updateSubtitle: (subtitleId: string, updates: Partial<Subtitle>) => void;
   addSubtitle: (subtitle: Subtitle) => void;
   removeSubtitle: (subtitleId: string) => void;
   setSelectedSubtitle: (subtitleId: string | null) => void;
   setEditingSubtitle: (subtitleId: string | null) => void;
   
+  // Export actions
   startExport: (settings: ExportSettings) => Promise<void>;
   
+  // Utility actions
   reset: () => void;
+  checkVideoValidity: () => void;
 }
 
 const initialPlayerState: VideoPlayerState = {
@@ -297,6 +310,29 @@ export const useVideoStore = create<VideoStore>()(
             subtitleEditor: initialSubtitleEditorState,
             exportJob: null
           });
+        },
+
+        // Check if the current project's video URL is still valid
+        checkVideoValidity: () => {
+          const { currentProject } = get();
+          if (!currentProject) return;
+          
+          // Check if the video URL is a blob URL and if it's still valid
+          if (currentProject.video.url.startsWith('blob:')) {
+            // Try to fetch the blob to check if it's still valid
+            fetch(currentProject.video.url)
+              .then(response => {
+                if (!response.ok) {
+                  throw new Error('Blob URL is no longer valid');
+                }
+              })
+              .catch(() => {
+                // If blob is invalid, show error message but keep project data
+                set({ 
+                  error: 'Video file is no longer available. Please upload your video again.'
+                });
+              });
+          }
         }
       }),
       {

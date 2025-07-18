@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { XMarkIcon } from '@heroicons/react/24/outline';
 import { Button } from '../ui';
 import { useVideoStore } from '../../store/videoStore';
 import FileUpload from './FileUpload';
@@ -14,7 +15,10 @@ export function UploadPage() {
     isProcessing, 
     processingSteps, 
     error, 
-    startProcessing 
+    startProcessing,
+    setCurrentProject,
+    setError,
+    checkVideoValidity
   } = useVideoStore();
 
   const handleUploadComplete = (file: File) => {
@@ -28,6 +32,17 @@ export function UploadPage() {
     setShowProcessing(true);
     await startProcessing(currentProject.id, selectedLanguage);
   };
+
+  const handleCancelProject = () => {
+    setCurrentProject(null);
+    setShowProcessing(false);
+    setError(null);
+  };
+
+  // Check video validity on component mount
+  useEffect(() => {
+    checkVideoValidity();
+  }, [checkVideoValidity]);
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
@@ -58,11 +73,21 @@ export function UploadPage() {
                   Ready for translation and dubbing
                 </p>
               </div>
-              <div className="text-right">
-                <p className="text-sm text-gray-600">Duration</p>
-                <p className="text-lg font-medium text-gray-900">
-                  {Math.round(currentProject.video.duration)}s
-                </p>
+              <div className="flex items-center space-x-4">
+                <div className="text-right">
+                  <p className="text-sm text-gray-600">Duration</p>
+                  <p className="text-lg font-medium text-gray-900">
+                    {Math.round(currentProject.video.duration)}s
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCancelProject}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <XMarkIcon className="w-5 h-5" />
+                </Button>
               </div>
             </div>
 
@@ -93,11 +118,27 @@ export function UploadPage() {
 
         {showProcessing && (
           <div className="mb-8">
-            <ProcessingStatus
-              steps={processingSteps}
-              isProcessing={isProcessing}
-              error={error}
-            />
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Processing Video
+                </h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCancelProject}
+                  className="text-gray-400 hover:text-gray-600"
+                  disabled={isProcessing}
+                >
+                  <XMarkIcon className="w-5 h-5" />
+                </Button>
+              </div>
+              <ProcessingStatus
+                steps={processingSteps}
+                isProcessing={isProcessing}
+                error={error}
+              />
+            </div>
           </div>
         )}
 
@@ -117,28 +158,78 @@ export function UploadPage() {
                 <Button variant="outline" size="lg">
                   Download Preview
                 </Button>
+                <Button 
+                  variant="ghost" 
+                  size="lg"
+                  onClick={handleCancelProject}
+                  className="text-gray-600 hover:text-gray-800"
+                >
+                  Start Over
+                </Button>
               </div>
             </div>
           </div>
         )}
 
-        {/* Error State */}
-        {error && (
+        {/* Video File Lost Error */}
+        {currentProject && error && error.includes('Video file is no longer available') && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4 mb-8">
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-yellow-800">
+                  Video file no longer available
+                </h3>
+                <p className="text-sm text-yellow-700 mt-1">
+                  The video file from your previous session is no longer available. Please upload your video again to continue.
+                </p>
+                <div className="mt-4">
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      setCurrentProject(null);
+                      setError(null);
+                    }}
+                    className="bg-yellow-50 border-yellow-300 text-yellow-800 hover:bg-yellow-100"
+                  >
+                    Upload New Video
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Regular Error State */}
+        {error && !error.includes('Video file is no longer available') && (
           <div className="bg-red-50 border border-red-200 rounded-md p-4 mb-8">
             <div className="text-center">
               <h3 className="text-lg font-semibold text-red-800 mb-2">
                 Processing Failed
               </h3>
               <p className="text-red-700 mb-4">{error}</p>
-              <Button 
-                variant="primary" 
-                onClick={() => {
-                  setShowProcessing(false);
-                  // Reset error state would be handled by store
-                }}
-              >
-                Try Again
-              </Button>
+              <div className="flex justify-center space-x-4">
+                <Button 
+                  variant="primary" 
+                  onClick={() => {
+                    setShowProcessing(false);
+                    setError(null);
+                  }}
+                >
+                  Try Again
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={handleCancelProject}
+                >
+                  Start Over
+                </Button>
+              </div>
             </div>
           </div>
         )}
