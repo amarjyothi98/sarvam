@@ -9,7 +9,8 @@ import {
   Subtitle,
   ExportSettings
 } from '../lib/types';
-import { apiService, ProcessingJob } from '../lib/api/realService';
+import { realProcessingService } from '../lib/api/realProcessingService';
+import { getVideoDuration } from '../lib/utils';
 
 interface VideoStore {
   // Current project state
@@ -131,23 +132,33 @@ export const useVideoStore = create<VideoStore>()(
           set({ isProcessing: true, error: null, currentStep: 'uploading' });
           
           try {
-            const uploadResponse = await apiService.uploadVideo(file);
+            // Get video duration
+            const duration = await getVideoDuration(file);
             
             // Create a basic project with upload info
+            const projectId = `project-${Date.now()}`;
             const newProject: VideoProject = {
-              id: uploadResponse.jobId,
-              name: uploadResponse.originalFileName,
+              id: projectId,
+              name: file.name,
               video: {
-                id: uploadResponse.jobId,
-                name: uploadResponse.originalFileName,
-                size: uploadResponse.fileSize,
-                type: uploadResponse.fileType,
-                url: uploadResponse.originalFilePath,
-                duration: 0, // Will be determined later
+                id: projectId,
+                name: file.name,
+                size: file.size,
+                type: file.type,
+                url: URL.createObjectURL(file),
+                duration: duration,
                 thumbnail: '',
                 uploadedAt: new Date()
               },
-              audioTracks: [],
+              audioTracks: [{
+                id: 'original',
+                name: 'Original Audio',
+                url: URL.createObjectURL(file),
+                type: 'original',
+                language: 'en',
+                volume: 0.8,
+                isMuted: false
+              }],
               subtitles: [],
               currentLanguage: 'en',
               availableLanguages: ['en'],
@@ -156,6 +167,9 @@ export const useVideoStore = create<VideoStore>()(
               createdAt: new Date(),
               updatedAt: new Date()
             };
+            
+            // Store the file for processing
+            (newProject as VideoProject & { videoFile: File }).videoFile = file;
             
             get().addProject(newProject);
             set({ currentProject: newProject });
@@ -172,22 +186,15 @@ export const useVideoStore = create<VideoStore>()(
           
           try {
             const { currentProject } = get();
-            if (!currentProject || !currentProject.video) {
+            if (!currentProject || !(currentProject as VideoProject & { videoFile: File }).videoFile) {
               throw new Error('No project or video file found');
             }
 
-            // Since the video is already uploaded, we need to reconstruct the File object
-            // For now, we'll work with the jobId which is the project ID
-            const jobId = videoId;
+            const videoFile = (currentProject as VideoProject & { videoFile: File }).videoFile;
             
-            // Start by extracting audio
-            set({ currentStep: 'extracting_audio' });
-            await apiService.extractAudio(jobId);
-            
-            // Poll for job status and update progress
+            // Initialize processing steps
             const processingSteps: ProcessingStep[] = [
-              { id: 'upload', name: 'Upload Video', status: 'completed', progress: 100, message: 'Video uploaded successfully' },
-              { id: 'extract_audio', name: 'Extract Audio', status: 'processing', progress: 0, message: 'Extracting audio from video...' },
+              { id: 'extract_audio', name: 'Extract Audio', status: 'processing', progress: 0, message: 'Starting...' },
               { id: 'transcribe', name: 'Transcribe Audio', status: 'pending', progress: 0, message: 'Waiting...' },
               { id: 'translate', name: 'Translate Text', status: 'pending', progress: 0, message: 'Waiting...' },
               { id: 'synthesize', name: 'Generate Speech', status: 'pending', progress: 0, message: 'Waiting...' }
@@ -195,51 +202,64 @@ export const useVideoStore = create<VideoStore>()(
             
             set({ processingSteps });
             
-            // Start polling for status updates
-            const pollInterval = setInterval(async () => {
-              try {
-                const status = await apiService.getJobStatus(jobId);
+            // Process the video
+            const result = await realProcessingService.processVideo(
+              videoFile,
+              targetLanguage,
+              (step, progress) => {
+                const updatedSteps = [...get().processingSteps];
                 
-                // Update processing steps based on status
-                const updatedSteps = [...processingSteps];
-                
-                switch (status.status) {
-                  case 'audio_extracted':
-                    updatedSteps[1] = { ...updatedSteps[1], status: 'completed', progress: 100, message: 'Audio extracted successfully' };
-                    updatedSteps[2] = { ...updatedSteps[2], status: 'processing', progress: 50, message: 'Transcribing audio...' };
-                    break;
-                  case 'transcribed':
-                    updatedSteps[1] = { ...updatedSteps[1], status: 'completed', progress: 100, message: 'Audio extracted successfully' };
-                    updatedSteps[2] = { ...updatedSteps[2], status: 'completed', progress: 100, message: 'Audio transcribed successfully' };
-                    updatedSteps[3] = { ...updatedSteps[3], status: 'processing', progress: 50, message: 'Translating text...' };
-                    break;
-                  case 'translated':
-                    updatedSteps[1] = { ...updatedSteps[1], status: 'completed', progress: 100, message: 'Audio extracted successfully' };
-                    updatedSteps[2] = { ...updatedSteps[2], status: 'completed', progress: 100, message: 'Audio transcribed successfully' };
-                    updatedSteps[3] = { ...updatedSteps[3], status: 'completed', progress: 100, message: 'Text translated successfully' };
-                    updatedSteps[4] = { ...updatedSteps[4], status: 'processing', progress: 50, message: 'Generating dubbed audio...' };
-                    break;
-                  case 'completed':
-                    updatedSteps[1] = { ...updatedSteps[1], status: 'completed', progress: 100, message: 'Audio extracted successfully' };
-                    updatedSteps[2] = { ...updatedSteps[2], status: 'completed', progress: 100, message: 'Audio transcribed successfully' };
-                    updatedSteps[3] = { ...updatedSteps[3], status: 'completed', progress: 100, message: 'Text translated successfully' };
-                    updatedSteps[4] = { ...updatedSteps[4], status: 'completed', progress: 100, message: 'Dubbed audio generated successfully' };
-                    
-                    clearInterval(pollInterval);
-                    set({ isProcessing: false, currentStep: 'completed' });
-                    break;
-                  case 'failed':
-                    clearInterval(pollInterval);
-                    throw new Error(status.error || 'Processing failed');
+                // Update step status based on progress
+                if (step.includes('Extracting')) {
+                  updatedSteps[0] = { ...updatedSteps[0], status: 'processing', progress, message: step };
+                } else if (step.includes('Transcribing')) {
+                  updatedSteps[0] = { ...updatedSteps[0], status: 'completed', progress: 100, message: 'Audio extracted' };
+                  updatedSteps[1] = { ...updatedSteps[1], status: 'processing', progress: progress - 30, message: step };
+                } else if (step.includes('Translating')) {
+                  updatedSteps[1] = { ...updatedSteps[1], status: 'completed', progress: 100, message: 'Transcription completed' };
+                  updatedSteps[2] = { ...updatedSteps[2], status: 'processing', progress: progress - 60, message: step };
+                } else if (step.includes('Generating')) {
+                  updatedSteps[2] = { ...updatedSteps[2], status: 'completed', progress: 100, message: 'Translation completed' };
+                  updatedSteps[3] = { ...updatedSteps[3], status: 'processing', progress: progress - 80, message: step };
+                } else if (step.includes('complete')) {
+                  updatedSteps[3] = { ...updatedSteps[3], status: 'completed', progress: 100, message: 'Speech synthesis completed' };
                 }
                 
-                set({ processingSteps: updatedSteps, currentStep: status.currentStep });
-                
-              } catch (error) {
-                clearInterval(pollInterval);
-                throw error;
+                set({ processingSteps: updatedSteps, currentStep: step });
               }
-            }, 2000);
+            );
+            
+            // Create subtitles from the transcript
+            const subtitle: Subtitle = {
+              id: 'subtitle-1',
+              text: result.transcript,
+              startTime: 0,
+              endTime: 10, // Default duration, can be improved with actual timing
+              isEdited: false
+            };
+
+            // Update the project with results
+            const updatedProject = {
+              ...currentProject,
+              subtitles: [subtitle],
+              currentLanguage: targetLanguage,
+              availableLanguages: [...currentProject.availableLanguages, targetLanguage],
+              audioTracks: [
+                ...currentProject.audioTracks,
+                {
+                  id: 'dubbed',
+                  name: `Dubbed Audio (${targetLanguage})`,
+                  url: result.synthesizedAudioUrl,
+                  type: 'dubbed' as const,
+                  language: targetLanguage,
+                  volume: 0.8,
+                  isMuted: false
+                }
+              ]
+            };
+            
+            get().updateProject(currentProject.id, updatedProject);
+            set({ isProcessing: false, currentStep: 'completed' });
             
           } catch (error) {
             set({ error: 'Processing failed: ' + (error as Error).message, isProcessing: false });

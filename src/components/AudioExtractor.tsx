@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
+
+// FFmpeg will be imported dynamically to avoid SSR issues
 
 const SARVAM_API_KEY = 'sk_aacj0kua_p4urcKlkhTwsQLxZgUGV320P';
 const SARVAM_API_URL = 'https://api.sarvam.ai/speech-to-text';
@@ -77,30 +77,32 @@ export default function AudioExtractor() {
   const [targetLanguage, setTargetLanguage] = useState('hi-IN'); // Default to Hindi
   const [synthesizedAudio, setSynthesizedAudio] = useState<string | null>(null);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
-  const ffmpegRef = useRef(new FFmpeg());
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ffmpegRef = useRef<any>(null);
 
   const loadFFmpeg = async () => {
+    if (!ffmpegRef.current) {
+      // Dynamic import to avoid SSR issues
+      const { FFmpeg } = await import('@ffmpeg/ffmpeg');
+      ffmpegRef.current = new FFmpeg();
+    }
+    
     const ffmpeg = ffmpegRef.current;
     
     if (!ffmpeg.loaded) {
-      setStatus('Loading FFmpeg...');
-      
+      const { toBlobURL } = await import('@ffmpeg/util');
       const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
       
       await ffmpeg.load({
         coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
         wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
       });
-      
-      ffmpeg.on('progress', ({ progress }) => {
-        setProgress(Math.round(progress * 100));
-      });
-      
-      setStatus('FFmpeg loaded successfully');
-    }
-  };
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+      ffmpeg.on('progress', ({ progress }: { progress: number }) => {
+        console.log('FFmpeg progress:', Math.round(progress * 100) + '%');
+      });
+    }
+  };  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file && file.type.startsWith('video/')) {
       setVideoFile(file);
@@ -269,6 +271,9 @@ export default function AudioExtractor() {
       
       // Load FFmpeg if not already loaded
       await loadFFmpeg();
+
+      // Dynamic import for fetchFile
+      const { fetchFile } = await import('@ffmpeg/util');
 
       // Write input file to FFmpeg filesystem
       await ffmpeg.writeFile('input.mp4', await fetchFile(videoFile));

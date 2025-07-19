@@ -24,8 +24,16 @@ export function FileUpload({ onUploadComplete, className = '' }: FileUploadProps
     const file = acceptedFiles[0];
     if (!file) return;
 
+    console.log('File selected:', {
+      name: file.name,
+      type: file.type,
+      size: file.size
+    });
+
     // Validate file
     const validation = validateVideoFile(file);
+    console.log('Validation result:', validation);
+    
     if (!validation.isValid) {
       setUploadError(validation.error || 'Invalid file');
       return;
@@ -38,6 +46,7 @@ export function FileUpload({ onUploadComplete, className = '' }: FileUploadProps
     try {
       const thumbnailUrl = await createVideoThumbnail(file);
       setThumbnail(thumbnailUrl);
+      console.log('Thumbnail generated successfully');
     } catch (error) {
       console.warn('Could not generate thumbnail:', error);
     }
@@ -46,43 +55,36 @@ export function FileUpload({ onUploadComplete, className = '' }: FileUploadProps
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
-      'video/*': ['.mp4', '.webm', '.mov', '.avi']
+      'video/*': ['.mp4', '.webm', '.mov', '.avi'],
+      'video/quicktime': ['.mov']
     },
     maxSize: 500 * 1024 * 1024, // 500MB
     multiple: false
   });
 
   const handleUpload = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile) {
+      return;
+    }
 
     setIsUploading(true);
     setUploadProgress(0);
     setUploadError(null);
 
     try {
-      const progressInterval = setInterval(() => {
-        setUploadProgress((prev) => {
-          if (prev >= 90) {
-            clearInterval(progressInterval);
-            return prev;
-          }
-          return prev + Math.random() * 10;
-        });
-      }, 200);
-
+      // Use real upload progress from the store
       await uploadVideo(selectedFile);
       
-      clearInterval(progressInterval);
       setUploadProgress(100);
-      
       onUploadComplete?.(selectedFile);
       
+      // Clean up UI after successful upload
       setTimeout(() => {
         setSelectedFile(null);
         setThumbnail(null);
         setUploadProgress(0);
         setIsUploading(false);
-      }, 2000);
+      }, 1500);
 
     } catch (error) {
       setUploadError((error as Error).message || 'Upload failed');
