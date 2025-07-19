@@ -2,9 +2,35 @@ import { useState, useRef } from 'react';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
-// Sarvam AI API configuration
 const SARVAM_API_KEY = 'sk_aacj0kua_p4urcKlkhTwsQLxZgUGV320P';
 const SARVAM_API_URL = 'https://api.sarvam.ai/speech-to-text';
+const SARVAM_TRANSLATE_URL = 'https://api.sarvam.ai/translate';
+
+const LANGUAGE_OPTIONS = [
+  { code: 'bn-IN', name: 'Bengali' },
+  { code: 'en-IN', name: 'English' },
+  { code: 'gu-IN', name: 'Gujarati' },
+  { code: 'hi-IN', name: 'Hindi' },
+  { code: 'kn-IN', name: 'Kannada' },
+  { code: 'ml-IN', name: 'Malayalam' },
+  { code: 'mr-IN', name: 'Marathi' },
+  { code: 'od-IN', name: 'Odia' },
+  { code: 'pa-IN', name: 'Punjabi' },
+  { code: 'ta-IN', name: 'Tamil' },
+  { code: 'te-IN', name: 'Telugu' },
+  { code: 'as-IN', name: 'Assamese' },
+  { code: 'brx-IN', name: 'Bodo' },
+  { code: 'doi-IN', name: 'Dogri' },
+  { code: 'kok-IN', name: 'Konkani' },
+  { code: 'ks-IN', name: 'Kashmiri' },
+  { code: 'mai-IN', name: 'Maithili' },
+  { code: 'mni-IN', name: 'Manipuri (Meiteilon)' },
+  { code: 'ne-IN', name: 'Nepali' },
+  { code: 'sa-IN', name: 'Sanskrit' },
+  { code: 'sat-IN', name: 'Santali' },
+  { code: 'sd-IN', name: 'Sindhi' },
+  { code: 'ur-IN', name: 'Urdu' }
+];
 
 interface TranscriptionResponse {
   request_id: string;
@@ -25,6 +51,12 @@ interface TranscriptionResponse {
   language_code: string;
 }
 
+interface TranslationResponse {
+  request_id: string;
+  translated_text: string;
+  source_language_code: string;
+}
+
 export default function AudioExtractor() {
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -34,6 +66,9 @@ export default function AudioExtractor() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [translation, setTranslation] = useState<TranslationResponse | null>(null);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [targetLanguage, setTargetLanguage] = useState('hi-IN'); // Default to Hindi
   const ffmpegRef = useRef(new FFmpeg());
 
   const loadFFmpeg = async () => {
@@ -64,10 +99,53 @@ export default function AudioExtractor() {
       setAudioUrl(null);
       setAudioBlob(null);
       setTranscription(null);
+      setTranslation(null);
       setProgress(0);
       setStatus('Video file selected');
     } else {
       setStatus('Please select a valid video file');
+    }
+  };
+
+  const translateText = async () => {
+    if (!transcription?.transcript) {
+      setStatus('No transcript available for translation');
+      return;
+    }
+
+    setIsTranslating(true);
+    setStatus('Translating text...');
+
+    try {
+      const response = await fetch(SARVAM_TRANSLATE_URL, {
+        method: 'POST',
+        headers: {
+          'api-subscription-key': SARVAM_API_KEY,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          input: transcription.transcript,
+          source_language_code: 'en-IN',
+          target_language_code: targetLanguage,
+          model: 'sarvam-translate:v1',
+          speaker_gender: 'Male',
+          mode: 'formal'
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result: TranslationResponse = await response.json();
+      setTranslation(result);
+      setStatus('Translation completed successfully!');
+
+    } catch (error) {
+      console.error('Error translating text:', error);
+      setStatus(`Translation error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsTranslating(false);
     }
   };
 
@@ -84,6 +162,7 @@ export default function AudioExtractor() {
       const formData = new FormData();
       formData.append('file', audioBlob, 'audio.wav');
       formData.append('model', 'saarika:v2.5');
+      formData.append('language_code', 'en-IN');
 
       const response = await fetch(SARVAM_API_URL, {
         method: 'POST',
@@ -258,6 +337,38 @@ export default function AudioExtractor() {
         </div>
       )}
 
+      {/* Translation Controls */}
+      {transcription && (
+        <div className="mb-6">
+          <h3 className="text-lg font-medium text-gray-800 mb-3">Translation</h3>
+          <div className="flex gap-3 items-end">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Target Language
+              </label>
+              <select
+                value={targetLanguage}
+                onChange={(e) => setTargetLanguage(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              >
+                {LANGUAGE_OPTIONS.map((lang) => (
+                  <option key={lang.code} value={lang.code}>
+                    {lang.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={translateText}
+              disabled={isTranslating}
+              className="bg-orange-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-orange-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+              {isTranslating ? 'Translating...' : 'Translate'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Transcription Output */}
       {transcription && (
         <div className="mb-6">
@@ -318,6 +429,54 @@ export default function AudioExtractor() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Translation Results */}
+      {translation && (
+        <div className="mb-6">
+          <h3 className="text-lg font-medium text-gray-800 mb-3">Translation Results</h3>
+          <div className="bg-orange-50 p-4 rounded-lg space-y-4">
+            
+            {/* Translated Text */}
+            <div>
+              <h4 className="font-medium text-gray-700 mb-2">Translated Text:</h4>
+              <p className="text-gray-800 bg-white p-3 rounded border">{translation.translated_text}</p>
+            </div>
+
+            {/* Source Language Detection */}
+            <div>
+              <h4 className="font-medium text-gray-700 mb-2">Source Language (Auto-detected):</h4>
+              <p className="text-gray-600">{translation.source_language_code}</p>
+            </div>
+
+            {/* Target Language */}
+            <div>
+              <h4 className="font-medium text-gray-700 mb-2">Target Language:</h4>
+              <p className="text-gray-600">{LANGUAGE_OPTIONS.find(lang => lang.code === targetLanguage)?.name}</p>
+            </div>
+
+            {/* Request ID */}
+            <div>
+              <h4 className="font-medium text-gray-700 mb-2">Translation Request ID:</h4>
+              <p className="text-gray-600 text-sm font-mono">{translation.request_id}</p>
+            </div>
+
+            {/* Original vs Translated Comparison */}
+            <div>
+              <h4 className="font-medium text-gray-700 mb-2">Comparison:</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <h5 className="text-sm font-medium text-gray-600 mb-1">Original Text:</h5>
+                  <p className="text-gray-700 bg-white p-2 rounded border text-sm">{transcription?.transcript}</p>
+                </div>
+                <div>
+                  <h5 className="text-sm font-medium text-gray-600 mb-1">Translated Text:</h5>
+                  <p className="text-gray-700 bg-white p-2 rounded border text-sm">{translation.translated_text}</p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
