@@ -5,6 +5,7 @@ import { fetchFile, toBlobURL } from '@ffmpeg/util';
 const SARVAM_API_KEY = 'sk_aacj0kua_p4urcKlkhTwsQLxZgUGV320P';
 const SARVAM_API_URL = 'https://api.sarvam.ai/speech-to-text';
 const SARVAM_TRANSLATE_URL = 'https://api.sarvam.ai/translate';
+const SARVAM_TTS_URL = 'https://api.sarvam.ai/text-to-speech';
 
 const LANGUAGE_OPTIONS = [
   { code: 'bn-IN', name: 'Bengali' },
@@ -57,6 +58,11 @@ interface TranslationResponse {
   source_language_code: string;
 }
 
+interface TextToSpeechResponse {
+  request_id: string;
+  audios: string[]; // Base64 encoded audio strings
+}
+
 export default function AudioExtractor() {
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -69,6 +75,8 @@ export default function AudioExtractor() {
   const [translation, setTranslation] = useState<TranslationResponse | null>(null);
   const [isTranslating, setIsTranslating] = useState(false);
   const [targetLanguage, setTargetLanguage] = useState('hi-IN'); // Default to Hindi
+  const [synthesizedAudio, setSynthesizedAudio] = useState<string | null>(null);
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
   const ffmpegRef = useRef(new FFmpeg());
 
   const loadFFmpeg = async () => {
@@ -100,6 +108,7 @@ export default function AudioExtractor() {
       setAudioBlob(null);
       setTranscription(null);
       setTranslation(null);
+      setSynthesizedAudio(null);
       setProgress(0);
       setStatus('Video file selected');
     } else {
@@ -146,6 +155,64 @@ export default function AudioExtractor() {
       setStatus(`Translation error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsTranslating(false);
+    }
+  };
+
+  const synthesizeAudio = async () => {
+    if (!translation?.translated_text) {
+      setStatus('No translated text available for synthesis');
+      return;
+    }
+
+    setIsSynthesizing(true);
+    setStatus('Synthesizing speech...');
+
+    try {
+      const response = await fetch(SARVAM_TTS_URL, {
+        method: 'POST',
+        headers: {
+          'api-subscription-key': SARVAM_API_KEY,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: translation.translated_text,
+          target_language_code: targetLanguage,
+          speaker: 'anushka',
+        //   speaker: 'abhilash',
+          pitch: 0.0,
+          pace: 1.0,
+          loudness: 1.0,
+          speech_sample_rate: 22050,
+          model: 'bulbul:v2',
+          enable_preprocessing: true
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result: TextToSpeechResponse = await response.json();
+      
+      if (result.audios && result.audios.length > 0) {
+        // Convert base64 audio to blob URL
+        const base64Audio = result.audios[0];
+        const audioBlob = new Blob([
+          new Uint8Array(atob(base64Audio).split('').map(char => char.charCodeAt(0)))
+        ], { type: 'audio/wav' });
+        
+        const audioUrl = URL.createObjectURL(audioBlob);
+        setSynthesizedAudio(audioUrl);
+        setStatus('Speech synthesis completed successfully!');
+      } else {
+        throw new Error('No audio data received from the API');
+      }
+
+    } catch (error) {
+      console.error('Error synthesizing speech:', error);
+      setStatus(`Speech synthesis error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsSynthesizing(false);
     }
   };
 
@@ -369,6 +436,22 @@ export default function AudioExtractor() {
         </div>
       )}
 
+      {/* Text-to-Speech Controls */}
+      {translation && (
+        <div className="mb-6">
+          <h3 className="text-lg font-medium text-gray-800 mb-3">Text-to-Speech</h3>
+          <div className="flex gap-3">
+            <button
+              onClick={synthesizeAudio}
+              disabled={isSynthesizing}
+              className="bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+              {isSynthesizing ? 'Synthesizing...' : 'Generate Speech'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Transcription Output */}
       {transcription && (
         <div className="mb-6">
@@ -476,6 +559,58 @@ export default function AudioExtractor() {
                   <p className="text-gray-700 bg-white p-2 rounded border text-sm">{translation.translated_text}</p>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Synthesized Audio Output */}
+      {synthesizedAudio && (
+        <div className="mb-6">
+          <h3 className="text-lg font-medium text-gray-800 mb-3">Synthesized Audio</h3>
+          <div className="bg-red-50 p-4 rounded-lg space-y-4">
+            
+            {/* Audio Player */}
+            <div>
+              <h4 className="font-medium text-gray-700 mb-2">Generated Audio:</h4>
+              <audio src={synthesizedAudio} controls className="w-full" />
+            </div>
+
+            {/* Audio Info */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <h4 className="font-medium text-gray-700 mb-2">Language:</h4>
+                <p className="text-gray-600">{LANGUAGE_OPTIONS.find(lang => lang.code === targetLanguage)?.name}</p>
+              </div>
+              <div>
+                <h4 className="font-medium text-gray-700 mb-2">Voice:</h4>
+                <p className="text-gray-600">Anushka (Female)</p>
+              </div>
+            </div>
+
+            {/* Text used for synthesis */}
+            <div>
+              <h4 className="font-medium text-gray-700 mb-2">Text used for synthesis:</h4>
+              <p className="text-gray-700 bg-white p-2 rounded border text-sm">{translation?.translated_text}</p>
+            </div>
+
+            {/* Download button */}
+            <div>
+              <button
+                onClick={() => {
+                  if (synthesizedAudio) {
+                    const link = document.createElement('a');
+                    link.href = synthesizedAudio;
+                    link.download = `synthesized_audio_${targetLanguage}.wav`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                  }
+                }}
+                className="bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700"
+              >
+                Download Synthesized Audio
+              </button>
             </div>
           </div>
         </div>
