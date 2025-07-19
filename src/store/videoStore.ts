@@ -9,7 +9,7 @@ import {
   Subtitle,
   ExportSettings
 } from '../lib/types';
-import { mockApiService } from '../lib/api/mockService';
+import { apiService, ProcessingJob } from '../lib/api/realService';
 
 interface VideoStore {
   // Current project state
@@ -128,40 +128,38 @@ export const useVideoStore = create<VideoStore>()(
         },
 
         uploadVideo: async (file) => {
-          set({ isProcessing: true, error: null });
+          set({ isProcessing: true, error: null, currentStep: 'uploading' });
           
           try {
-            const response = await mockApiService.uploadVideo(file);
+            const uploadResponse = await apiService.uploadVideo(file);
             
-            if (response.success && response.data) {
-              const videoFile = response.data;
-              const newProject: VideoProject = {
-                id: videoFile.id,
-                name: videoFile.name,
-                video: videoFile,
-                audioTracks: [{
-                  id: 'original',
-                  name: 'Original Audio',
-                  url: videoFile.url,
-                  type: 'original',
-                  language: 'en',
-                  volume: 0.8,
-                  isMuted: false
-                }],
-                subtitles: [],
-                currentLanguage: 'en',
-                availableLanguages: ['en'],
-                trimStart: 0,
-                trimEnd: videoFile.duration,
-                createdAt: new Date(),
-                updatedAt: new Date()
-              };
-              
-              get().addProject(newProject);
-              set({ currentProject: newProject });
-            } else {
-              set({ error: response.error || 'Upload failed' });
-            }
+            // Create a basic project with upload info
+            const newProject: VideoProject = {
+              id: uploadResponse.jobId,
+              name: uploadResponse.originalFileName,
+              video: {
+                id: uploadResponse.jobId,
+                name: uploadResponse.originalFileName,
+                size: uploadResponse.fileSize,
+                type: uploadResponse.fileType,
+                url: uploadResponse.originalFilePath,
+                duration: 0, // Will be determined later
+                thumbnail: '',
+                uploadedAt: new Date()
+              },
+              audioTracks: [],
+              subtitles: [],
+              currentLanguage: 'en',
+              availableLanguages: ['en'],
+              trimStart: 0,
+              trimEnd: 0,
+              createdAt: new Date(),
+              updatedAt: new Date()
+            };
+            
+            get().addProject(newProject);
+            set({ currentProject: newProject });
+            
           } catch (error) {
             set({ error: 'Upload failed: ' + (error as Error).message });
           } finally {
@@ -170,47 +168,81 @@ export const useVideoStore = create<VideoStore>()(
         },
 
         startProcessing: async (videoId, targetLanguage) => {
-          set({ isProcessing: true, error: null, currentStep: 'upload' });
+          set({ isProcessing: true, error: null, currentStep: 'starting' });
           
           try {
-            const response = await mockApiService.processVideo(
-              videoId, 
-              targetLanguage,
-              (steps) => set({ processingSteps: steps })
-            );
-            
-            if (response.success && response.data) {
-              const translationJob = response.data;
-              
-              const { currentProject } = get();
-              if (currentProject) {
-                const dubbedAudioResponse = await mockApiService.generateDubbedAudio(
-                  translationJob.subtitles,
-                  targetLanguage
-                );
-                
-                if (dubbedAudioResponse.success && dubbedAudioResponse.data) {
-                  const updatedProject = {
-                    ...currentProject,
-                    subtitles: translationJob.subtitles,
-                    currentLanguage: targetLanguage,
-                    availableLanguages: [...currentProject.availableLanguages, targetLanguage],
-                    audioTracks: [
-                      ...currentProject.audioTracks,
-                      dubbedAudioResponse.data
-                    ]
-                  };
-                  
-                  get().updateProject(currentProject.id, updatedProject);
-                }
-              }
-            } else {
-              set({ error: response.error || 'Processing failed' });
+            const { currentProject } = get();
+            if (!currentProject || !currentProject.video) {
+              throw new Error('No project or video file found');
             }
+
+            // Since the video is already uploaded, we need to reconstruct the File object
+            // For now, we'll work with the jobId which is the project ID
+            const jobId = videoId;
+            
+            // Start by extracting audio
+            set({ currentStep: 'extracting_audio' });
+            await apiService.extractAudio(jobId);
+            
+            // Poll for job status and update progress
+            const processingSteps: ProcessingStep[] = [
+              { id: 'upload', name: 'Upload Video', status: 'completed', progress: 100, message: 'Video uploaded successfully' },
+              { id: 'extract_audio', name: 'Extract Audio', status: 'processing', progress: 0, message: 'Extracting audio from video...' },
+              { id: 'transcribe', name: 'Transcribe Audio', status: 'pending', progress: 0, message: 'Waiting...' },
+              { id: 'translate', name: 'Translate Text', status: 'pending', progress: 0, message: 'Waiting...' },
+              { id: 'synthesize', name: 'Generate Speech', status: 'pending', progress: 0, message: 'Waiting...' }
+            ];
+            
+            set({ processingSteps });
+            
+            // Start polling for status updates
+            const pollInterval = setInterval(async () => {
+              try {
+                const status = await apiService.getJobStatus(jobId);
+                
+                // Update processing steps based on status
+                const updatedSteps = [...processingSteps];
+                
+                switch (status.status) {
+                  case 'audio_extracted':
+                    updatedSteps[1] = { ...updatedSteps[1], status: 'completed', progress: 100, message: 'Audio extracted successfully' };
+                    updatedSteps[2] = { ...updatedSteps[2], status: 'processing', progress: 50, message: 'Transcribing audio...' };
+                    break;
+                  case 'transcribed':
+                    updatedSteps[1] = { ...updatedSteps[1], status: 'completed', progress: 100, message: 'Audio extracted successfully' };
+                    updatedSteps[2] = { ...updatedSteps[2], status: 'completed', progress: 100, message: 'Audio transcribed successfully' };
+                    updatedSteps[3] = { ...updatedSteps[3], status: 'processing', progress: 50, message: 'Translating text...' };
+                    break;
+                  case 'translated':
+                    updatedSteps[1] = { ...updatedSteps[1], status: 'completed', progress: 100, message: 'Audio extracted successfully' };
+                    updatedSteps[2] = { ...updatedSteps[2], status: 'completed', progress: 100, message: 'Audio transcribed successfully' };
+                    updatedSteps[3] = { ...updatedSteps[3], status: 'completed', progress: 100, message: 'Text translated successfully' };
+                    updatedSteps[4] = { ...updatedSteps[4], status: 'processing', progress: 50, message: 'Generating dubbed audio...' };
+                    break;
+                  case 'completed':
+                    updatedSteps[1] = { ...updatedSteps[1], status: 'completed', progress: 100, message: 'Audio extracted successfully' };
+                    updatedSteps[2] = { ...updatedSteps[2], status: 'completed', progress: 100, message: 'Audio transcribed successfully' };
+                    updatedSteps[3] = { ...updatedSteps[3], status: 'completed', progress: 100, message: 'Text translated successfully' };
+                    updatedSteps[4] = { ...updatedSteps[4], status: 'completed', progress: 100, message: 'Dubbed audio generated successfully' };
+                    
+                    clearInterval(pollInterval);
+                    set({ isProcessing: false, currentStep: 'completed' });
+                    break;
+                  case 'failed':
+                    clearInterval(pollInterval);
+                    throw new Error(status.error || 'Processing failed');
+                }
+                
+                set({ processingSteps: updatedSteps, currentStep: status.currentStep });
+                
+              } catch (error) {
+                clearInterval(pollInterval);
+                throw error;
+              }
+            }, 2000);
+            
           } catch (error) {
-            set({ error: 'Processing failed: ' + (error as Error).message });
-          } finally {
-            set({ isProcessing: false, currentStep: '' });
+            set({ error: 'Processing failed: ' + (error as Error).message, isProcessing: false });
           }
         },
 
@@ -229,7 +261,9 @@ export const useVideoStore = create<VideoStore>()(
 
         updateSubtitle: (subtitleId, updates) => {
           const { currentProject } = get();
-          if (!currentProject) return;
+          if (!currentProject) {
+            return;
+          }
           
           const updatedSubtitles = currentProject.subtitles.map(sub =>
             sub.id === subtitleId 
@@ -242,7 +276,9 @@ export const useVideoStore = create<VideoStore>()(
         
         addSubtitle: (subtitle) => {
           const { currentProject } = get();
-          if (!currentProject) return;
+          if (!currentProject) {
+            return;
+          }
           
           const updatedSubtitles = [...currentProject.subtitles, subtitle];
           get().updateProject(currentProject.id, { subtitles: updatedSubtitles });
@@ -250,7 +286,9 @@ export const useVideoStore = create<VideoStore>()(
         
         removeSubtitle: (subtitleId) => {
           const { currentProject } = get();
-          if (!currentProject) return;
+          if (!currentProject) {
+            return;
+          }
           
           const updatedSubtitles = currentProject.subtitles.filter(sub => sub.id !== subtitleId);
           get().updateProject(currentProject.id, { subtitles: updatedSubtitles });
@@ -276,29 +314,19 @@ export const useVideoStore = create<VideoStore>()(
           });
         },
 
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         startExport: async (settings) => {
           const { currentProject } = get();
-          if (!currentProject) return;
+          if (!currentProject) {
+            return;
+          }
           
           set({ isProcessing: true, error: null });
           
           try {
-            const response = await mockApiService.exportVideo(
-              currentProject.id,
-              settings,
-              (progress) => {
-                const { exportJob } = get();
-                if (exportJob) {
-                  set({ exportJob: { ...exportJob, progress } });
-                }
-              }
-            );
-            
-            if (response.success && response.data) {
-              set({ exportJob: response.data });
-            } else {
-              set({ error: response.error || 'Export failed' });
-            }
+            // TODO: Implement real export functionality
+            // For now, just simulate export
+            set({ error: 'Export functionality not yet implemented' });
           } catch (error) {
             set({ error: 'Export failed: ' + (error as Error).message });
           } finally {
@@ -323,7 +351,9 @@ export const useVideoStore = create<VideoStore>()(
         // Check if the current project's video URL is still valid
         checkVideoValidity: () => {
           const { currentProject } = get();
-          if (!currentProject) return;
+          if (!currentProject) {
+            return;
+          }
           
           // Check if the video URL is a blob URL and if it's still valid
           if (currentProject.video.url.startsWith('blob:')) {
