@@ -2,12 +2,38 @@ import { useState, useRef } from 'react';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
+// Sarvam AI API configuration
+const SARVAM_API_KEY = 'sk_aacj0kua_p4urcKlkhTwsQLxZgUGV320P';
+const SARVAM_API_URL = 'https://api.sarvam.ai/speech-to-text';
+
+interface TranscriptionResponse {
+  request_id: string;
+  transcript: string;
+  timestamps?: {
+    words: string[];
+    start_time_seconds: number[];
+    end_time_seconds: number[];
+  };
+  diarized_transcript?: {
+    entries: Array<{
+      transcript: string;
+      start_time_seconds: number;
+      end_time_seconds: number;
+      speaker_id: string;
+    }>;
+  };
+  language_code: string;
+}
+
 export default function AudioExtractor() {
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const ffmpegRef = useRef(new FFmpeg());
 
   const loadFFmpeg = async () => {
@@ -36,10 +62,50 @@ export default function AudioExtractor() {
     if (file && file.type.startsWith('video/')) {
       setVideoFile(file);
       setAudioUrl(null);
+      setAudioBlob(null);
+      setTranscription(null);
       setProgress(0);
       setStatus('Video file selected');
     } else {
       setStatus('Please select a valid video file');
+    }
+  };
+
+  const transcribeAudio = async () => {
+    if (!audioBlob) {
+      setStatus('No audio file available for transcription');
+      return;
+    }
+
+    setIsTranscribing(true);
+    setStatus('Transcribing audio...');
+
+    try {
+      const formData = new FormData();
+      formData.append('file', audioBlob, 'audio.wav');
+      formData.append('model', 'saarika:v2.5');
+
+      const response = await fetch(SARVAM_API_URL, {
+        method: 'POST',
+        headers: {
+          'api-subscription-key': SARVAM_API_KEY,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result: TranscriptionResponse = await response.json();
+      setTranscription(result);
+      setStatus('Transcription completed successfully!');
+
+    } catch (error) {
+      console.error('Error transcribing audio:', error);
+      setStatus(`Transcription error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsTranscribing(false);
     }
   };
 
@@ -80,6 +146,7 @@ export default function AudioExtractor() {
       const url = URL.createObjectURL(audioBlob);
       
       setAudioUrl(url);
+      setAudioBlob(audioBlob); // Store the blob for transcription
       setStatus('Audio extraction completed!');
       setProgress(100);
 
@@ -173,12 +240,85 @@ export default function AudioExtractor() {
         <div className="mb-6">
           <h3 className="text-lg font-medium text-gray-800 mb-3">Extracted Audio</h3>
           <audio src={audioUrl} controls className="w-full mb-3" />
-          <button
-            onClick={downloadAudio}
-            className="bg-green-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-green-700"
-          >
-            Download Audio File
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={downloadAudio}
+              className="bg-green-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-green-700"
+            >
+              Download Audio File
+            </button>
+            <button
+              onClick={transcribeAudio}
+              disabled={isTranscribing}
+              className="bg-purple-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+              {isTranscribing ? 'Transcribing...' : 'Transcribe Audio'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Transcription Output */}
+      {transcription && (
+        <div className="mb-6">
+          <h3 className="text-lg font-medium text-gray-800 mb-3">Transcription Results</h3>
+          <div className="bg-gray-50 p-4 rounded-lg space-y-4">
+            
+            {/* Main Transcript */}
+            <div>
+              <h4 className="font-medium text-gray-700 mb-2">Transcript:</h4>
+              <p className="text-gray-800 bg-white p-3 rounded border">{transcription.transcript}</p>
+            </div>
+
+            {/* Language Detection */}
+            <div>
+              <h4 className="font-medium text-gray-700 mb-2">Detected Language:</h4>
+              <p className="text-gray-600">{transcription.language_code}</p>
+            </div>
+
+            {/* Request ID */}
+            <div>
+              <h4 className="font-medium text-gray-700 mb-2">Request ID:</h4>
+              <p className="text-gray-600 text-sm font-mono">{transcription.request_id}</p>
+            </div>
+
+            {/* Timestamps (if available) */}
+            {transcription.timestamps && (
+              <div>
+                <h4 className="font-medium text-gray-700 mb-2">Word Timestamps:</h4>
+                <div className="max-h-40 overflow-y-auto bg-white p-3 rounded border">
+                  {transcription.timestamps.words.map((word, index) => (
+                    <div key={index} className="flex justify-between items-center py-1 text-sm">
+                      <span className="font-medium">{word}</span>
+                      <span className="text-gray-500">
+                        {transcription.timestamps!.start_time_seconds[index]}s - {transcription.timestamps!.end_time_seconds[index]}s
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Diarized Transcript (if available) */}
+            {transcription.diarized_transcript && (
+              <div>
+                <h4 className="font-medium text-gray-700 mb-2">Speaker Diarization:</h4>
+                <div className="max-h-40 overflow-y-auto bg-white p-3 rounded border space-y-2">
+                  {transcription.diarized_transcript.entries.map((entry, index) => (
+                    <div key={index} className="border-l-4 border-blue-400 pl-3">
+                      <div className="flex justify-between items-start">
+                        <span className="font-medium text-blue-600">{entry.speaker_id}</span>
+                        <span className="text-gray-500 text-sm">
+                          {entry.start_time_seconds}s - {entry.end_time_seconds}s
+                        </span>
+                      </div>
+                      <p className="text-gray-800 mt-1">{entry.transcript}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
