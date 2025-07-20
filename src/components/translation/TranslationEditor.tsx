@@ -9,10 +9,7 @@ import {
   CheckIcon, 
   XMarkIcon,
   EyeIcon,
-  EyeSlashIcon,
-  SpeakerWaveIcon,
-  PlayIcon,
-  PauseIcon
+  EyeSlashIcon
 } from '@heroicons/react/24/outline';
 import { formatTime } from '../../lib/utils';
 
@@ -39,7 +36,6 @@ export function TranslationEditor({
   const [editText, setEditText] = useState('');
   const [showOriginal, setShowOriginal] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [currentlyPlaying, setCurrentlyPlaying] = useState<string | null>(null);
 
   const subtitles = currentProject?.subtitles || [];
   const { currentTime } = playerState;
@@ -63,7 +59,9 @@ export function TranslationEditor({
   }, [updateSubtitleEditor]);
 
   const handleEditSave = useCallback(() => {
-    if (!editingSubtitle || !currentProject) return;
+    if (!editingSubtitle || !currentProject) {
+      return;
+    }
     
     const updatedSubtitles = currentProject.subtitles.map(sub => 
       sub.id === editingSubtitle 
@@ -93,17 +91,6 @@ export function TranslationEditor({
     onTimeSeek?.(subtitle.startTime);
     updateSubtitleEditor({ selectedSubtitle: subtitle.id });
   }, [onSubtitleSelect, onTimeSeek, updateSubtitleEditor]);
-
-  // Handle subtitle playback
-  const handleSubtitlePlay = useCallback((subtitle: Subtitle) => {
-    setCurrentlyPlaying(subtitle.id);
-    onTimeSeek?.(subtitle.startTime);
-    
-    // Auto-stop after subtitle duration
-    setTimeout(() => {
-      setCurrentlyPlaying(null);
-    }, (subtitle.endTime - subtitle.startTime) * 1000);
-  }, [onTimeSeek]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -208,56 +195,37 @@ export function TranslationEditor({
                   )}
                 </div>
                 
-                <div className="flex items-center space-x-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleSubtitlePlay(subtitle)}
-                    className="p-1"
-                  >
-                    {currentlyPlaying === subtitle.id ? (
-                      <PauseIcon className="w-4 h-4" />
-                    ) : (
-                      <PlayIcon className="w-4 h-4" />
-                    )}
-                  </Button>
-                  
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleSubtitleClick(subtitle)}
-                    className="p-1"
-                  >
-                    <SpeakerWaveIcon className="w-4 h-4" />
-                  </Button>
-                  
+                <div className="flex items-center justify-end">
                   {editingSubtitle === subtitle.id ? (
-                    <div className="flex items-center space-x-1">
+                    <div className="flex items-center space-x-2">
                       <Button
-                        variant="ghost"
+                        variant="primary"
                         size="sm"
                         onClick={handleEditSave}
-                        className="p-1 text-green-400 hover:text-green-300"
+                        className="px-3 py-1 text-green-50 bg-green-600 hover:bg-green-700"
                       >
-                        <CheckIcon className="w-4 h-4" />
+                        <CheckIcon className="w-4 h-4 mr-1" />
+                        Save
                       </Button>
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={handleEditCancel}
-                        className="p-1 text-red-400 hover:text-red-300"
+                        className="px-3 py-1 text-red-400 hover:text-red-300 hover:bg-red-900/20"
                       >
-                        <XMarkIcon className="w-4 h-4" />
+                        <XMarkIcon className="w-4 h-4 mr-1" />
+                        Cancel
                       </Button>
                     </div>
                   ) : (
                     <Button
-                      variant="ghost"
+                      variant="primary"
                       size="sm"
                       onClick={() => handleEditStart(subtitle)}
-                      className="p-1"
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium"
                     >
-                      <PencilIcon className="w-4 h-4" />
+                      <PencilIcon className="w-4 h-4 mr-2" />
+                      Edit
                     </Button>
                   )}
                 </div>

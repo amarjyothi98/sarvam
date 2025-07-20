@@ -59,20 +59,23 @@ export function UploadPage() {
     if (currentProject) {
       setIsDownloading(true);
       try {
-        // Simulate download preparation time
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Check if there's a dubbed audio track available
+        const dubbedTrack = currentProject.audioTracks.find(track => track.type === 'dubbed');
         
-        // Create a mock download URL - in a real app, this would be generated from the server
-        const downloadUrl = URL.createObjectURL(new Blob(['Mock video content'], { type: 'video/mp4' }));
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.download = `${currentProject.name}_preview.mp4`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(downloadUrl);
+        if (dubbedTrack) {
+          // Create a download link for the dubbed audio
+          const link = document.createElement('a');
+          link.href = dubbedTrack.url;
+          link.download = `${currentProject.name}_dubbed_audio.wav`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        } else {
+          throw new Error('No dubbed audio available for download');
+        }
       } catch (error) {
         console.error('Download error:', error);
+        setError?.('Failed to download preview. Please try processing the video again.');
       } finally {
         setIsDownloading(false);
       }

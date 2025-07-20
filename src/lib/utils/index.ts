@@ -64,13 +64,27 @@ export function throttle<T extends (...args: unknown[]) => unknown>(
 }
 
 export function validateVideoFile(file: File): { isValid: boolean; error?: string } {
-  const validTypes = ['video/mp4', 'video/webm', 'video/mov', 'video/avi'];
+  const validTypes = ['video/mp4', 'video/webm', 'video/mov', 'video/avi', 'video/quicktime'];
   const maxSize = 500 * 1024 * 1024; // 500MB
   
-  if (!validTypes.includes(file.type)) {
+  // Check file extension as fallback for MIME type issues
+  const extension = file.name.toLowerCase().split('.').pop();
+  const validExtensions = ['mp4', 'webm', 'mov', 'avi'];
+  
+  console.log('Validating file:', {
+    name: file.name,
+    type: file.type,
+    extension: extension,
+    size: file.size
+  });
+  
+  const hasValidType = validTypes.includes(file.type);
+  const hasValidExtension = extension && validExtensions.includes(extension);
+  
+  if (!hasValidType && !hasValidExtension) {
     return {
       isValid: false,
-      error: 'Invalid file type. Please upload MP4, WebM, MOV, or AVI files.'
+      error: `Invalid file type. Please upload MP4, WebM, MOV, or AVI files. (Detected: ${file.type})`
     };
   }
   
@@ -109,6 +123,22 @@ export function createVideoThumbnail(file: File): Promise<string> {
     
     video.onerror = () => {
       reject(new Error('Could not load video'));
+    };
+    
+    video.src = URL.createObjectURL(file);
+  });
+}
+
+export function getVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    
+    video.onloadedmetadata = () => {
+      resolve(video.duration);
+    };
+    
+    video.onerror = () => {
+      reject(new Error('Could not load video to get duration'));
     };
     
     video.src = URL.createObjectURL(file);

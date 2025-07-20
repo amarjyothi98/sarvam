@@ -9,7 +9,92 @@ import {
   Subtitle,
   ExportSettings
 } from '../lib/types';
-import { mockApiService } from '../lib/api/mockService';
+import { realProcessingService } from '../lib/api/realProcessingService';
+import { getVideoDuration } from '../lib/utils';
+
+// Helper function to break transcript into timed subtitles
+function createTimedSubtitles(
+  transcript: string, 
+  translatedText: string | null, 
+  videoDuration: number
+): Subtitle[] {
+  const SUBTITLE_DURATION = 3; // 3 seconds per subtitle
+  const originalWords = transcript.split(' ');
+  const translatedWords = translatedText ? translatedText.split(' ') : [];
+  const subtitles: Subtitle[] = [];
+  
+  // Calculate roughly how many words per subtitle based on total duration
+  const totalSubtitles = Math.ceil(videoDuration / SUBTITLE_DURATION);
+  const wordsPerSubtitle = Math.ceil(originalWords.length / totalSubtitles);
+  
+  let currentTime = 0;
+  let wordIndex = 0;
+  
+  while (wordIndex < originalWords.length && currentTime < videoDuration) {
+    const endTime = Math.min(currentTime + SUBTITLE_DURATION, videoDuration);
+    const originalSubtitleWords = originalWords.slice(wordIndex, wordIndex + wordsPerSubtitle);
+    
+    // For translated text, try to match the segmentation proportionally
+    let translatedSubtitleWords: string[] = [];
+    if (translatedWords.length > 0) {
+      const translatedWordsPerSubtitle = Math.ceil(translatedWords.length / totalSubtitles);
+      const translatedStartIndex = Math.floor((wordIndex / originalWords.length) * translatedWords.length);
+      const translatedEndIndex = Math.min(
+        translatedStartIndex + translatedWordsPerSubtitle,
+        translatedWords.length
+      );
+      translatedSubtitleWords = translatedWords.slice(translatedStartIndex, translatedEndIndex);
+    }
+    
+    if (originalSubtitleWords.length > 0) {
+      subtitles.push({
+        id: `subtitle-${subtitles.length + 1}`,
+        text: translatedSubtitleWords.length > 0 
+          ? translatedSubtitleWords.join(' ') 
+          : originalSubtitleWords.join(' '), // Fallback to original if no translation
+        originalText: originalSubtitleWords.join(' '),
+        startTime: currentTime,
+        endTime: endTime,
+        isEdited: false
+      });
+    }
+    
+    currentTime += SUBTITLE_DURATION;
+    wordIndex += wordsPerSubtitle;
+  }
+  
+  // If there are remaining words, add them to the last subtitle or create a new one
+  if (wordIndex < originalWords.length) {
+    const remainingOriginalWords = originalWords.slice(wordIndex);
+    const remainingTranslatedWords = translatedWords.length > 0 
+      ? translatedWords.slice(Math.floor((wordIndex / originalWords.length) * translatedWords.length))
+      : [];
+    
+    if (subtitles.length > 0) {
+      // Add to last subtitle
+      const lastSubtitle = subtitles[subtitles.length - 1];
+      lastSubtitle.originalText += ' ' + remainingOriginalWords.join(' ');
+      lastSubtitle.text += remainingTranslatedWords.length > 0 
+        ? ' ' + remainingTranslatedWords.join(' ')
+        : ' ' + remainingOriginalWords.join(' ');
+      lastSubtitle.endTime = videoDuration;
+    } else {
+      // Create new subtitle for remaining words
+      subtitles.push({
+        id: `subtitle-${subtitles.length + 1}`,
+        text: remainingTranslatedWords.length > 0 
+          ? remainingTranslatedWords.join(' ')
+          : remainingOriginalWords.join(' '),
+        originalText: remainingOriginalWords.join(' '),
+        startTime: currentTime,
+        endTime: videoDuration,
+        isEdited: false
+      });
+    }
+  }
+  
+  return subtitles;
+}
 
 interface VideoStore {
   // Current project state
@@ -128,40 +213,51 @@ export const useVideoStore = create<VideoStore>()(
         },
 
         uploadVideo: async (file) => {
-          set({ isProcessing: true, error: null });
+          set({ isProcessing: true, error: null, currentStep: 'uploading' });
           
           try {
-            const response = await mockApiService.uploadVideo(file);
+            // Get video duration
+            const duration = await getVideoDuration(file);
             
-            if (response.success && response.data) {
-              const videoFile = response.data;
-              const newProject: VideoProject = {
-                id: videoFile.id,
-                name: videoFile.name,
-                video: videoFile,
-                audioTracks: [{
-                  id: 'original',
-                  name: 'Original Audio',
-                  url: videoFile.url,
-                  type: 'original',
-                  language: 'en',
-                  volume: 0.8,
-                  isMuted: false
-                }],
-                subtitles: [],
-                currentLanguage: 'en',
-                availableLanguages: ['en'],
-                trimStart: 0,
-                trimEnd: videoFile.duration,
-                createdAt: new Date(),
-                updatedAt: new Date()
-              };
-              
-              get().addProject(newProject);
-              set({ currentProject: newProject });
-            } else {
-              set({ error: response.error || 'Upload failed' });
-            }
+            // Create a basic project with upload info
+            const projectId = `project-${Date.now()}`;
+            const newProject: VideoProject = {
+              id: projectId,
+              name: file.name,
+              video: {
+                id: projectId,
+                name: file.name,
+                size: file.size,
+                type: file.type,
+                url: URL.createObjectURL(file),
+                duration: duration,
+                thumbnail: '',
+                uploadedAt: new Date()
+              },
+              audioTracks: [{
+                id: 'original',
+                name: 'Original Audio',
+                url: URL.createObjectURL(file),
+                type: 'original',
+                language: 'en',
+                volume: 0.8,
+                isMuted: false
+              }],
+              subtitles: [],
+              currentLanguage: 'en',
+              availableLanguages: ['en'],
+              trimStart: 0,
+              trimEnd: 0,
+              createdAt: new Date(),
+              updatedAt: new Date()
+            };
+            
+            // Store the file for processing
+            (newProject as VideoProject & { videoFile: File }).videoFile = file;
+            
+            get().addProject(newProject);
+            set({ currentProject: newProject });
+            
           } catch (error) {
             set({ error: 'Upload failed: ' + (error as Error).message });
           } finally {
@@ -170,47 +266,92 @@ export const useVideoStore = create<VideoStore>()(
         },
 
         startProcessing: async (videoId, targetLanguage) => {
-          set({ isProcessing: true, error: null, currentStep: 'upload' });
+          set({ isProcessing: true, error: null, currentStep: 'starting' });
           
           try {
-            const response = await mockApiService.processVideo(
-              videoId, 
+            const { currentProject } = get();
+            if (!currentProject || !(currentProject as VideoProject & { videoFile: File }).videoFile) {
+              throw new Error('No project or video file found');
+            }
+
+            const { videoFile } = currentProject as VideoProject & { videoFile: File };
+            
+            // Initialize processing steps
+            const processingSteps: ProcessingStep[] = [
+              { id: 'extract_audio', name: 'Extract Audio', status: 'processing', progress: 0, message: 'Starting...' },
+              { id: 'transcribe', name: 'Transcribe Audio', status: 'pending', progress: 0, message: 'Waiting...' },
+              { id: 'translate', name: 'Translate Text', status: 'pending', progress: 0, message: 'Waiting...' },
+              { id: 'synthesize', name: 'Generate Speech', status: 'pending', progress: 0, message: 'Waiting...' }
+            ];
+            
+            set({ processingSteps });
+            
+            // Process the video
+            const result = await realProcessingService.processVideo(
+              videoFile,
               targetLanguage,
-              (steps) => set({ processingSteps: steps })
+              (step, progress) => {
+                const updatedSteps = [...get().processingSteps];
+                
+                // Update step status based on progress
+                if (step.includes('Extracting')) {
+                  updatedSteps[0] = { ...updatedSteps[0], status: 'processing', progress, message: step };
+                } else if (step.includes('Transcribing')) {
+                  updatedSteps[0] = { ...updatedSteps[0], status: 'completed', progress: 100, message: 'Audio extracted' };
+                  updatedSteps[1] = { ...updatedSteps[1], status: 'processing', progress: progress - 30, message: step };
+                } else if (step.includes('Translating')) {
+                  updatedSteps[1] = { ...updatedSteps[1], status: 'completed', progress: 100, message: 'Transcription completed' };
+                  updatedSteps[2] = { ...updatedSteps[2], status: 'processing', progress: progress - 60, message: step };
+                } else if (step.includes('Generating')) {
+                  updatedSteps[2] = { ...updatedSteps[2], status: 'completed', progress: 100, message: 'Translation completed' };
+                  updatedSteps[3] = { ...updatedSteps[3], status: 'processing', progress: progress - 80, message: step };
+                } else if (step.includes('complete')) {
+                  updatedSteps[3] = { ...updatedSteps[3], status: 'completed', progress: 100, message: 'Speech synthesis completed' };
+                }
+                
+                set({ processingSteps: updatedSteps, currentStep: step });
+              }
             );
             
-            if (response.success && response.data) {
-              const translationJob = response.data;
-              
-              const { currentProject } = get();
-              if (currentProject) {
-                const dubbedAudioResponse = await mockApiService.generateDubbedAudio(
-                  translationJob.subtitles,
-                  targetLanguage
-                );
-                
-                if (dubbedAudioResponse.success && dubbedAudioResponse.data) {
-                  const updatedProject = {
-                    ...currentProject,
-                    subtitles: translationJob.subtitles,
-                    currentLanguage: targetLanguage,
-                    availableLanguages: [...currentProject.availableLanguages, targetLanguage],
-                    audioTracks: [
-                      ...currentProject.audioTracks,
-                      dubbedAudioResponse.data
-                    ]
-                  };
-                  
-                  get().updateProject(currentProject.id, updatedProject);
-                }
-              }
-            } else {
-              set({ error: response.error || 'Processing failed' });
+            // Create timed subtitles from the transcript
+            let timedSubtitles: Subtitle[] = [];
+            
+            try {
+              const { videoFile } = currentProject as VideoProject & { videoFile: File };
+              const duration = await getVideoDuration(videoFile);
+              timedSubtitles = createTimedSubtitles(result.transcript, result.translatedText, duration);
+            } catch (error) {
+              console.error('Error getting video duration for subtitles:', error);
+              // Fallback to estimated duration
+              const fallbackDuration = 30; // 30 seconds default
+              timedSubtitles = createTimedSubtitles(result.transcript, result.translatedText, fallbackDuration);
             }
+
+            // Update the project with results
+            const updatedProject = {
+              ...currentProject,
+              subtitles: timedSubtitles,
+              currentLanguage: targetLanguage,
+              availableLanguages: [...currentProject.availableLanguages, targetLanguage],
+              audioTracks: [
+                ...currentProject.audioTracks,
+                {
+                  id: 'dubbed',
+                  name: `Dubbed Audio (${targetLanguage})`,
+                  url: result.synthesizedAudioUrl,
+                  type: 'dubbed' as const,
+                  language: targetLanguage,
+                  volume: 0.8,
+                  isMuted: false
+                }
+              ]
+            };
+            
+            get().updateProject(currentProject.id, updatedProject);
+            set({ isProcessing: false, currentStep: 'completed' });
+            
           } catch (error) {
-            set({ error: 'Processing failed: ' + (error as Error).message });
-          } finally {
-            set({ isProcessing: false, currentStep: '' });
+            set({ error: 'Processing failed: ' + (error as Error).message, isProcessing: false });
           }
         },
 
@@ -229,7 +370,9 @@ export const useVideoStore = create<VideoStore>()(
 
         updateSubtitle: (subtitleId, updates) => {
           const { currentProject } = get();
-          if (!currentProject) return;
+          if (!currentProject) {
+            return;
+          }
           
           const updatedSubtitles = currentProject.subtitles.map(sub =>
             sub.id === subtitleId 
@@ -242,7 +385,9 @@ export const useVideoStore = create<VideoStore>()(
         
         addSubtitle: (subtitle) => {
           const { currentProject } = get();
-          if (!currentProject) return;
+          if (!currentProject) {
+            return;
+          }
           
           const updatedSubtitles = [...currentProject.subtitles, subtitle];
           get().updateProject(currentProject.id, { subtitles: updatedSubtitles });
@@ -250,7 +395,9 @@ export const useVideoStore = create<VideoStore>()(
         
         removeSubtitle: (subtitleId) => {
           const { currentProject } = get();
-          if (!currentProject) return;
+          if (!currentProject) {
+            return;
+          }
           
           const updatedSubtitles = currentProject.subtitles.filter(sub => sub.id !== subtitleId);
           get().updateProject(currentProject.id, { subtitles: updatedSubtitles });
@@ -276,29 +423,19 @@ export const useVideoStore = create<VideoStore>()(
           });
         },
 
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         startExport: async (settings) => {
           const { currentProject } = get();
-          if (!currentProject) return;
+          if (!currentProject) {
+            return;
+          }
           
           set({ isProcessing: true, error: null });
           
           try {
-            const response = await mockApiService.exportVideo(
-              currentProject.id,
-              settings,
-              (progress) => {
-                const { exportJob } = get();
-                if (exportJob) {
-                  set({ exportJob: { ...exportJob, progress } });
-                }
-              }
-            );
-            
-            if (response.success && response.data) {
-              set({ exportJob: response.data });
-            } else {
-              set({ error: response.error || 'Export failed' });
-            }
+            // TODO: Implement real export functionality
+            // For now, just simulate export
+            set({ error: 'Export functionality not yet implemented' });
           } catch (error) {
             set({ error: 'Export failed: ' + (error as Error).message });
           } finally {
@@ -323,7 +460,9 @@ export const useVideoStore = create<VideoStore>()(
         // Check if the current project's video URL is still valid
         checkVideoValidity: () => {
           const { currentProject } = get();
-          if (!currentProject) return;
+          if (!currentProject) {
+            return;
+          }
           
           // Check if the video URL is a blob URL and if it's still valid
           if (currentProject.video.url.startsWith('blob:')) {
