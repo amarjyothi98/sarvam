@@ -13,26 +13,46 @@ import { realProcessingService } from '../lib/api/realProcessingService';
 import { getVideoDuration } from '../lib/utils';
 
 // Helper function to break transcript into timed subtitles
-function createTimedSubtitles(transcript: string, videoDuration: number): Subtitle[] {
+function createTimedSubtitles(
+  transcript: string, 
+  translatedText: string | null, 
+  videoDuration: number
+): Subtitle[] {
   const SUBTITLE_DURATION = 3; // 3 seconds per subtitle
-  const words = transcript.split(' ');
+  const originalWords = transcript.split(' ');
+  const translatedWords = translatedText ? translatedText.split(' ') : [];
   const subtitles: Subtitle[] = [];
   
   // Calculate roughly how many words per subtitle based on total duration
   const totalSubtitles = Math.ceil(videoDuration / SUBTITLE_DURATION);
-  const wordsPerSubtitle = Math.ceil(words.length / totalSubtitles);
+  const wordsPerSubtitle = Math.ceil(originalWords.length / totalSubtitles);
   
   let currentTime = 0;
   let wordIndex = 0;
   
-  while (wordIndex < words.length && currentTime < videoDuration) {
+  while (wordIndex < originalWords.length && currentTime < videoDuration) {
     const endTime = Math.min(currentTime + SUBTITLE_DURATION, videoDuration);
-    const subtitleWords = words.slice(wordIndex, wordIndex + wordsPerSubtitle);
+    const originalSubtitleWords = originalWords.slice(wordIndex, wordIndex + wordsPerSubtitle);
     
-    if (subtitleWords.length > 0) {
+    // For translated text, try to match the segmentation proportionally
+    let translatedSubtitleWords: string[] = [];
+    if (translatedWords.length > 0) {
+      const translatedWordsPerSubtitle = Math.ceil(translatedWords.length / totalSubtitles);
+      const translatedStartIndex = Math.floor((wordIndex / originalWords.length) * translatedWords.length);
+      const translatedEndIndex = Math.min(
+        translatedStartIndex + translatedWordsPerSubtitle,
+        translatedWords.length
+      );
+      translatedSubtitleWords = translatedWords.slice(translatedStartIndex, translatedEndIndex);
+    }
+    
+    if (originalSubtitleWords.length > 0) {
       subtitles.push({
         id: `subtitle-${subtitles.length + 1}`,
-        text: subtitleWords.join(' '),
+        text: translatedSubtitleWords.length > 0 
+          ? translatedSubtitleWords.join(' ') 
+          : originalSubtitleWords.join(' '), // Fallback to original if no translation
+        originalText: originalSubtitleWords.join(' '),
         startTime: currentTime,
         endTime: endTime,
         isEdited: false
@@ -44,18 +64,28 @@ function createTimedSubtitles(transcript: string, videoDuration: number): Subtit
   }
   
   // If there are remaining words, add them to the last subtitle or create a new one
-  if (wordIndex < words.length) {
-    const remainingWords = words.slice(wordIndex);
+  if (wordIndex < originalWords.length) {
+    const remainingOriginalWords = originalWords.slice(wordIndex);
+    const remainingTranslatedWords = translatedWords.length > 0 
+      ? translatedWords.slice(Math.floor((wordIndex / originalWords.length) * translatedWords.length))
+      : [];
+    
     if (subtitles.length > 0) {
       // Add to last subtitle
       const lastSubtitle = subtitles[subtitles.length - 1];
-      lastSubtitle.text += ' ' + remainingWords.join(' ');
+      lastSubtitle.originalText += ' ' + remainingOriginalWords.join(' ');
+      lastSubtitle.text += remainingTranslatedWords.length > 0 
+        ? ' ' + remainingTranslatedWords.join(' ')
+        : ' ' + remainingOriginalWords.join(' ');
       lastSubtitle.endTime = videoDuration;
     } else {
       // Create new subtitle for remaining words
       subtitles.push({
         id: `subtitle-${subtitles.length + 1}`,
-        text: remainingWords.join(' '),
+        text: remainingTranslatedWords.length > 0 
+          ? remainingTranslatedWords.join(' ')
+          : remainingOriginalWords.join(' '),
+        originalText: remainingOriginalWords.join(' '),
         startTime: currentTime,
         endTime: videoDuration,
         isEdited: false
@@ -244,7 +274,7 @@ export const useVideoStore = create<VideoStore>()(
               throw new Error('No project or video file found');
             }
 
-            const videoFile = (currentProject as VideoProject & { videoFile: File }).videoFile;
+            const { videoFile } = currentProject as VideoProject & { videoFile: File };
             
             // Initialize processing steps
             const processingSteps: ProcessingStep[] = [
@@ -289,12 +319,12 @@ export const useVideoStore = create<VideoStore>()(
             try {
               const { videoFile } = currentProject as VideoProject & { videoFile: File };
               const duration = await getVideoDuration(videoFile);
-              timedSubtitles = createTimedSubtitles(result.transcript, duration);
+              timedSubtitles = createTimedSubtitles(result.transcript, result.translatedText, duration);
             } catch (error) {
               console.error('Error getting video duration for subtitles:', error);
               // Fallback to estimated duration
               const fallbackDuration = 30; // 30 seconds default
-              timedSubtitles = createTimedSubtitles(result.transcript, fallbackDuration);
+              timedSubtitles = createTimedSubtitles(result.transcript, result.translatedText, fallbackDuration);
             }
 
             // Update the project with results
