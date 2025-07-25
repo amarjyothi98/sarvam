@@ -30,6 +30,7 @@ export function VideoPlayer({
   className = '' 
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const dubbedAudioRef = useRef<HTMLAudioElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [showControls, setShowControls] = useState(true);
   const [currentSubtitle, setCurrentSubtitle] = useState<Subtitle | null>(null);
@@ -56,14 +57,22 @@ export function VideoPlayer({
 
   // Handle play/pause
   const togglePlay = useCallback(() => {
-    if (!videoRef.current) return;
+    if (!videoRef.current) {
+      return;
+    }
     
     if (isPlaying) {
       videoRef.current.pause();
+      if (dubbedAudioRef.current && selectedAudioTrack !== 'original') {
+        dubbedAudioRef.current.pause();
+      }
     } else {
       videoRef.current.play();
+      if (dubbedAudioRef.current && selectedAudioTrack !== 'original') {
+        dubbedAudioRef.current.play();
+      }
     }
-  }, [isPlaying]);
+  }, [isPlaying, selectedAudioTrack]);
 
   // Handle volume change
   const handleVolumeChange = useCallback((newVolume: number) => {
@@ -85,12 +94,20 @@ export function VideoPlayer({
 
   // Handle seek
   const handleSeek = useCallback((time: number) => {
-    if (!videoRef.current) return;
+    if (!videoRef.current) {
+      return;
+    }
     
     const clampedTime = Math.max(0, Math.min(duration, time));
     videoRef.current.currentTime = clampedTime;
+    
+    // Sync dubbed audio if it's active
+    if (dubbedAudioRef.current && selectedAudioTrack !== 'original') {
+      dubbedAudioRef.current.currentTime = clampedTime;
+    }
+    
     updatePlayerState({ currentTime: clampedTime });
-  }, [duration, updatePlayerState]);
+  }, [duration, updatePlayerState, selectedAudioTrack]);
 
   // Handle progress bar dragging
   const handleProgressMouseMove = useCallback((e: React.MouseEvent) => {
@@ -153,7 +170,34 @@ export function VideoPlayer({
   // Handle audio track change
   const handleAudioTrackChange = useCallback((trackId: string) => {
     updatePlayerState({ selectedAudioTrack: trackId });
-  }, [updatePlayerState]);
+    
+    if (!videoRef.current || !dubbedAudioRef.current || !currentProject) {
+      return;
+    }
+
+    const selectedTrack = currentProject.audioTracks.find(track => track.id === trackId);
+    if (!selectedTrack) {
+      return;
+    }
+
+    if (selectedTrack.type === 'original') {
+      // Use original video audio
+      videoRef.current.muted = false;
+      dubbedAudioRef.current.pause();
+      dubbedAudioRef.current.currentTime = 0;
+    } else if (selectedTrack.type === 'dubbed') {
+      // Use dubbed audio
+      videoRef.current.muted = true;
+      dubbedAudioRef.current.src = selectedTrack.url;
+      dubbedAudioRef.current.currentTime = videoRef.current.currentTime;
+      dubbedAudioRef.current.volume = selectedTrack.volume;
+      dubbedAudioRef.current.muted = selectedTrack.isMuted;
+      
+      if (!videoRef.current.paused) {
+        dubbedAudioRef.current.play();
+      }
+    }
+  }, [updatePlayerState, currentProject]);
 
   // Skip forward/backward
   const skipTime = useCallback((seconds: number) => {
@@ -186,15 +230,28 @@ export function VideoPlayer({
 
   const handleVideoPlay = useCallback(() => {
     updatePlayerState({ isPlaying: true });
-  }, [updatePlayerState]);
+    // Sync dubbed audio
+    if (dubbedAudioRef.current && selectedAudioTrack !== 'original') {
+      dubbedAudioRef.current.play();
+    }
+  }, [updatePlayerState, selectedAudioTrack]);
 
   const handleVideoPause = useCallback(() => {
     updatePlayerState({ isPlaying: false });
-  }, [updatePlayerState]);
+    // Sync dubbed audio
+    if (dubbedAudioRef.current && selectedAudioTrack !== 'original') {
+      dubbedAudioRef.current.pause();
+    }
+  }, [updatePlayerState, selectedAudioTrack]);
 
   const handleVideoEnded = useCallback(() => {
     updatePlayerState({ isPlaying: false, currentTime: duration });
-  }, [updatePlayerState, duration]);
+    // Sync dubbed audio
+    if (dubbedAudioRef.current && selectedAudioTrack !== 'original') {
+      dubbedAudioRef.current.pause();
+      dubbedAudioRef.current.currentTime = 0;
+    }
+  }, [updatePlayerState, duration, selectedAudioTrack]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -252,6 +309,21 @@ export function VideoPlayer({
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, [updatePlayerState]);
+
+  // Initialize audio track selection
+  useEffect(() => {
+    if (!currentProject || !currentProject.audioTracks.length) {
+      return;
+    }
+
+    // If no audio track is selected, default to original
+    if (!selectedAudioTrack) {
+      const originalTrack = currentProject.audioTracks.find(track => track.type === 'original');
+      if (originalTrack) {
+        updatePlayerState({ selectedAudioTrack: originalTrack.id });
+      }
+    }
+  }, [currentProject, selectedAudioTrack, updatePlayerState]);
 
   // Mouse move handler for showing/hiding controls
   useEffect(() => {
@@ -346,6 +418,13 @@ export function VideoPlayer({
         }}
         preload="metadata"
         playsInline
+      />
+
+      {/* Dubbed Audio Element */}
+      <audio
+        ref={dubbedAudioRef}
+        preload="metadata"
+        style={{ display: 'none' }}
       />
 
       {/* Subtitle Overlay */}
